@@ -267,22 +267,28 @@ async def umami_counts(ctx: Ctx, lo: str, hi: str) -> dict:
 
 
 async def bug_measure(ctx: Ctx, w: dict) -> Result:
-    """故障：失败率 = 失败事件 / 分母（漏斗第一步事件，未配置时用访问数）。"""
+    """故障：失败率 = 失败事件 / 分母事件。
+
+    分母优先用站点配置的漏斗第一步；没配置时用基线期里次数最多的非失败事件
+    （转换类站点就是 upload），前后两段用同一个分母，口径才可比。
+    """
     name = w["key"].split(":", 1)[1]
     b_lo, b_hi, a_lo, a_hi, days = windows(date.fromisoformat(w["fixed_at"]), date.today())
-    funnel = json.loads(ctx.site["funnel_events"] or "[]")
+    base_counts = await umami_counts(ctx, b_lo, b_hi)
+    denom_name = denominator(ctx.site, base_counts["events"])
 
-    async def measure(lo: str, hi: str) -> dict:
-        c = await umami_counts(ctx, lo, hi)
-        denom_name = funnel[0] if funnel else "访问"
-        denom = c["events"].get(funnel[0], 0) if funnel else c["visits"]
+    def shape(c: dict) -> dict:
+        denom = c["events"].get(denom_name, 0) if denom_name else c["visits"]
         fails = c["events"].get(name, 0)
         return {
             "fails": fails,
             "base": denom,
-            "base_name": denom_name,
+            "base_name": denom_name or "访问",
             "rate": round(fails / denom, 4) if denom else None,
         }
+
+    async def measure(lo: str, hi: str) -> dict:
+        return shape(base_counts if (lo, hi) == (b_lo, b_hi) else await umami_counts(ctx, lo, hi))
 
     before, after = await measure(b_lo, b_hi), await measure(a_lo, a_hi)
     after["breakdown"] = await error_breakdown(ctx, name, a_lo, a_hi) if after["fails"] else []
@@ -298,11 +304,19 @@ async def bug_measure(ctx: Ctx, w: dict) -> Result:
     pct = lambda r: "—" if r is None else f"{r * 100:.1f}%"  # noqa: E731
     text = (
         f"失败率 {pct(br)} → {pct(ar)}（目标减半）· 观察期 {after['fails']} 次失败 / "
-        f"{after['base']} 次{before['base_name']}"
+        f"{after['base']} 次 {before['base_name']}"
     )
     if after["breakdown"]:
         text += " · " + "、".join(f"{v['value']}×{v['count']}" for v in after["breakdown"][:4])
     return Result(verdict, text, before, after, days)
+
+
+def denominator(site: dict, events: dict[str, int]) -> str | None:
+    funnel = json.loads(site["funnel_events"] or "[]")
+    if funnel:
+        return funnel[0]
+    normal = [(n, k) for k, n in events.items() if not report.FAIL_EVENT.search(k)]
+    return max(normal)[1] if normal else None
 
 
 async def error_breakdown(ctx: Ctx, name: str, lo: str, hi: str) -> list[dict]:

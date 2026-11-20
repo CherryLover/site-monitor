@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from datetime import date, timedelta
 
@@ -16,6 +17,8 @@ from app.db import DB
 from app.upstream.umami import window_ms
 
 RANGES = {"7d": 7, "28d": 28, "8w": 56, "90d": 90}
+# 名字里带 fail / error 的 Umami 事件都算失败事件
+FAIL_EVENT = re.compile(r"fail|error", re.I)
 # URL Inspection 里这些状态都算「正常」：已收录，或本来就不该单独收录
 NOT_INDEXED_OK = {
     "Submitted and indexed",

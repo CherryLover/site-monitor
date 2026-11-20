@@ -8,7 +8,6 @@
 # ============================================================================
 from __future__ import annotations
 
-import re
 from urllib.parse import urlparse
 
 from app.core import markets, report, watch
@@ -16,7 +15,7 @@ from app.db import DB, now_iso
 
 WINDOW_DAYS = 28
 MIN_IMPR = 20
-FAIL_EVENT = re.compile(r"fail|error", re.I)
+FAIL_EVENT = report.FAIL_EVENT
 NOT_INDEXED_OK = report.NOT_INDEXED_OK
 
 
