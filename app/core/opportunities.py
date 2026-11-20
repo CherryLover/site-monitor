@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from app.core import report
+from app.core import markets, report
 from app.db import DB, now_iso
 
 WINDOW_DAYS = 28
@@ -155,6 +155,7 @@ async def build(db: DB, clients, site: dict) -> list[dict]:
     lo, hi = report.gsc_window(db, site["id"], WINDOW_DAYS)
     items = search_rules(report.queries(db, site, lo, hi), report.pages(db, site, lo, hi))
     items += index_rule(db, site["id"])
+    items += markets.market_rule(db, site, lo, hi, report.brand_fn(site))
     if site["umami_website_id"]:
         items += umami_rules(await report.umami_overview(clients, site, WINDOW_DAYS))
     states = {

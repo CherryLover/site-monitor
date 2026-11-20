@@ -60,19 +60,26 @@ def last_ok(db: DB, site_id: int, kind: str) -> str | None:
 async def sync_gsc(db: DB, clients: Clients, site: dict) -> str:
     if not site["gsc_property"]:
         return "未关联 Search Console 属性，跳过"
-    gsc = clients.gsc()
-    days = REFRESH_DAYS if last_ok(db, site["id"], "gsc") else FIRST_SYNC_DAYS
+    gsc, sid, prop = clients.gsc(), site["id"], site["gsc_property"]
+    days = REFRESH_DAYS if last_ok(db, sid, "gsc") else FIRST_SYNC_DAYS
+    # 国家维度是后加的：库里还没有时单独回填完整历史
+    has_country = db.one("SELECT 1 AS x FROM gsc_country WHERE site_id = ? LIMIT 1", sid)
+    country_days = REFRESH_DAYS if has_country else FIRST_SYNC_DAYS
     end = date.today()
-    start = end - timedelta(days=days)
-    base = {"startDate": str(start), "endDate": str(end), "rowLimit": 25000, "dataState": "all"}
 
-    daily = await gsc.query(site["gsc_property"], {**base, "dimensions": ["date"]})
-    rows = await _paged(gsc, site["gsc_property"], {**base, "dimensions": ["date", "query", "page"]})
+    def window(n: int) -> dict:
+        lo = end - timedelta(days=n)
+        return {"startDate": str(lo), "endDate": str(end), "rowLimit": 25000, "dataState": "all"}
 
-    sid, lo = site["id"], str(start)
+    daily = await gsc.query(prop, {**window(days), "dimensions": ["date"]})
+    rows = await _paged(gsc, prop, {**window(days), "dimensions": ["date", "query", "page"]})
+    by_country = await _paged(gsc, prop, {**window(country_days), "dimensions": ["date", "query", "country"]})
+
+    lo, clo = str(end - timedelta(days=days)), str(end - timedelta(days=country_days))
     with db.conn() as c:
         c.execute("DELETE FROM gsc_daily WHERE site_id = ? AND date >= ?", (sid, lo))
         c.execute("DELETE FROM gsc_rows WHERE site_id = ? AND date >= ?", (sid, lo))
+        c.execute("DELETE FROM gsc_country WHERE site_id = ? AND date >= ?", (sid, clo))
         c.executemany(
             "INSERT INTO gsc_daily VALUES (?, ?, ?, ?, ?)",
             [(sid, r["keys"][0], r["clicks"], r["impressions"], r["position"]) for r in daily],
@@ -81,7 +88,11 @@ async def sync_gsc(db: DB, clients: Clients, site: dict) -> str:
             "INSERT INTO gsc_rows VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(sid, *r["keys"], r["clicks"], r["impressions"], r["position"]) for r in rows],
         )
-    return f"{start} ~ {end}：{len(daily)} 天，{len(rows)} 行明细"
+        c.executemany(
+            "INSERT INTO gsc_country VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(sid, *r["keys"], r["clicks"], r["impressions"], r["position"]) for r in by_country],
+        )
+    return f"{lo} ~ {end}：{len(daily)} 天，{len(rows)} 行明细，{len(by_country)} 行国家明细"
 
 
 async def _paged(gsc, prop: str, body: dict) -> list[dict]:

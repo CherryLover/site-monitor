@@ -30,15 +30,19 @@ export function currentSite() {
   return state.sites.find((s) => s.domain === want) || state.sites[0] || null;
 }
 
-function chrome() {
-  const here = location.pathname;
+const section = (p) => (p.startsWith("/settings") ? "/settings" : p);
+
+export function chrome() {
+  const here = section(location.pathname);
   document.querySelectorAll("[data-nav]").forEach((a) => {
-    a.toggleAttribute("aria-current", a.dataset.nav === here);
     if (a.dataset.nav === here) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   });
   const site = currentSite();
+  // 站点顺序和序号来自设置里的拖拽排序
   document.getElementById("site-tabs").innerHTML = here === "/" ? state.sites.map((s) =>
-    `<a href="/?site=${encodeURIComponent(s.domain)}" ${s === site ? 'aria-current="page"' : ""}>${esc(s.domain)}</a>`).join("") : "";
+    `<a href="/?site=${encodeURIComponent(s.domain)}" ${s === site ? 'aria-current="page"' : ""}>
+      <span class="site-no">${s.number}</span>${esc(s.domain)}</a>`).join("") : "";
   document.getElementById("user").innerHTML = state.me ? `
     <span>${esc(state.me.name || state.me.email)}</span>
     <form method="post" action="/auth/logout"><button class="btn" type="submit">退出</button></form>` : "";
@@ -49,7 +53,8 @@ async function render() {
     history.replaceState(null, "", "/setup");
   }
   chrome();
-  const view = VIEWS[location.pathname] || dashboard;
+  const view = VIEWS[section(location.pathname)] || dashboard;
+  if (view !== dashboard) dashboard.stop();
   try {
     await view.render(root);
   } catch (e) {

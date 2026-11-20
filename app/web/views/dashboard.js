@@ -1,86 +1,159 @@
 // ============================================================================
 //  dashboard —— 单站点概览（对应设计稿）
 //
-//  各区块并行请求、各自渲染：一个上游挂了只影响它自己那一块。
-//  时间范围和站点都放在 URL 参数里，刷新、分享链接都能还原。
+//  页面只搭一次骨架，之后一律局部刷新：每个区块自己调 JSON 接口、只重绘自己。
+//    切换时间范围 → 只刷新依赖范围的「指标」「漏斗」
+//    同步进行中   → 每 4 秒拉一次站点状态；某类作业跑完，只重绘依赖它的区块
+//  不再有任何 location.reload：滚动位置、展开的对话框、筛选状态都不会丢。
 // ============================================================================
-import { currentSite, go } from "/static/app.js";
+import { currentSite, go, state } from "/static/app.js";
 import { api, delta, esc, num, path, shortDate, stackBar, toast, trendChart, when } from "/static/ui.js";
 
 const RANGES = [["7d", "7 天"], ["28d", "28 天"], ["8w", "8 周"], ["90d", "90 天"]];
-const TYPES = { rank: "排名", cannibal: "抢词", gap: "缺页", index: "收录", bug: "故障", data: "数据" };
+const TYPES = { rank: "排名", cannibal: "抢词", gap: "缺页", market: "市场", index: "收录", bug: "故障", data: "数据" };
 const IMPACT_CLS = { 高: "bad", 中: "warn", 低: "flat" };
+const KINDS = ["gsc", "inspections", "pagespeed"];
+const DEPENDS = { gsc: ["kpis", "trend", "opps", "funnel"], inspections: ["index", "opps"], pagespeed: ["health"] };
+const POLL_MS = 4000;
 let oppFilter = "all";
-let poll = null;
+let board = null;
 
 const param = (k, d) => new URLSearchParams(location.search).get(k) || d;
 
-export async function render(root) {
-  clearTimeout(poll);
-  const site = currentSite();
-  if (!site) return go("/setup");
-  const range = param("range", "28d");
-  const base = `/api/v1/sites/${encodeURIComponent(site.domain)}`;
-  const syncing = Object.values(site.jobs).some((j) => j.running);
-  const firstSync = !site.jobs.gsc.last_ok;
-
-  root.innerHTML = `
-    <div class="row between">
-      <div><h1>${esc(site.domain)}</h1>
-        <p class="muted small" id="fresh"></p></div>
-      <div class="row">
-        <div class="segmented" role="group" aria-label="时间范围">${RANGES.map(([id, l]) =>
-          `<button class="pill" type="button" data-range="${id}" aria-pressed="${id === range}">${l}</button>`).join("")}</div>
-        <button class="btn" type="button" id="sync" ${syncing ? "disabled" : ""}>${syncing ? '<span class="spin" aria-hidden="true"></span>同步中' : "立即同步"}</button>
-      </div>
-    </div>
-    ${firstSync ? `<div class="callout" role="status">${syncing ? "首次同步进行中：正在拉取 16 个月的搜索数据，完成后页面会自动刷新。" :
-      `还没有成功同步过搜索数据。${esc(site.jobs.gsc.detail || "")}`}</div>` : ""}
-    <section class="kpis" id="kpis" aria-label="核心指标"><div class="kpi"><span class="muted">加载中…</span></div></section>
-    <section class="grid2">
-      <div class="card wide" id="trend"></div>
-      <div class="card" id="mix"></div>
-    </section>
-    <section class="card flush" id="opps"></section>
-    <section class="card flush" id="funnel"></section>
-    <section class="grid2"><div class="card" id="index"></div><div class="card" id="health"></div></section>
-    <section class="card flush" id="changes"></section>
-    ${apiCard(site.domain)}`;
-
-  root.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () =>
-    go(`/?site=${encodeURIComponent(site.domain)}&range=${b.dataset.range}`)));
-  root.querySelector("#sync").addEventListener("click", async () => {
-    await api(`${base}/sync`, { method: "POST" });
-    toast("已开始同步：搜索数据 → 收录巡检 → PageSpeed");
-    setTimeout(() => location.reload(), 1200);
-  });
-  fresh(root, site);
-
-  const block = (id, fn) => fn().catch((e) => {
-    const el = root.querySelector(id);
-    el.innerHTML = `<div class="${el.classList.contains("flush") ? "empty" : ""}"><p class="bad">这一块加载失败：${esc(e.message)}</p></div>`;
-  });
-  await Promise.all([
-    block("#kpis", () => kpis(root, base, range)),
-    block("#trend", () => trend(root, base)),
-    block("#opps", () => opps(root, base)),
-    block("#funnel", () => funnel(root, base, range)),
-    block("#index", () => indexStatus(root, base)),
-    block("#health", () => health(root, base)),
-    block("#changes", () => changes(root, base)),
-  ]);
-  if (syncing) poll = setTimeout(() => location.reload(), 6000);
+export function stop() {
+  board?.stop();
+  board = null;
 }
 
-function fresh(root, site) {
-  const j = site.jobs;
-  root.querySelector("#fresh").textContent =
-    `搜索数据 ${when(j.gsc.last_ok)} · 收录巡检 ${when(j.inspections.last_ok)} · PageSpeed ${when(j.pagespeed.last_ok)} · Umami 实时`;
+export async function render(root) {
+  board?.stop();
+  const site = currentSite();
+  if (!site) return go("/setup");
+  board = new Board(root, site);
+  await board.mount();
+}
+
+class Board {
+  constructor(root, site) {
+    this.root = root;
+    this.site = site;
+    this.range = param("range", "28d");
+    this.base = `/api/v1/sites/${encodeURIComponent(site.domain)}`;
+    this.alive = true;
+    this.timer = null;
+    this.gscThrough = null;
+  }
+
+  stop() {
+    this.alive = false;
+    clearTimeout(this.timer);
+  }
+
+  $(sel) {
+    return this.root.querySelector(sel);
+  }
+
+  async mount() {
+    this.root.innerHTML = `
+      <div class="row between">
+        <div><h1><span class="site-no">${this.site.number}</span>${esc(this.site.domain)}</h1>
+          <p class="muted small" id="fresh"></p></div>
+        <div class="row">
+          <div class="segmented" role="group" aria-label="时间范围">${RANGES.map(([id, l]) =>
+            `<button class="pill" type="button" data-range="${id}" aria-pressed="${id === this.range}">${l}</button>`).join("")}</div>
+          <button class="btn" type="button" id="sync"></button>
+        </div>
+      </div>
+      <div id="sync-note"></div>
+      <section class="kpis" id="kpis" aria-label="核心指标"><div class="kpi"><span class="muted">加载中…</span></div></section>
+      <section class="grid2">
+        <div class="card wide" id="trend"></div>
+        <div class="card" id="mix"></div>
+      </section>
+      <section class="card flush" id="opps"></section>
+      <section class="card flush" id="funnel"></section>
+      <section class="grid2"><div class="card" id="index"></div><div class="card" id="health"></div></section>
+      <section class="card flush" id="changes"></section>
+      ${apiCard(this.site.domain)}`;
+    this.root.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => this.setRange(b.dataset.range)));
+    this.$("#sync").addEventListener("click", () => this.sync());
+    this.paintStatus();
+    await this.refresh(["kpis", "trend", "opps", "funnel", "index", "health", "changes"]);
+    if (this.syncing()) this.watch();
+  }
+
+  syncing() {
+    return KINDS.some((k) => this.site.jobs[k].running);
+  }
+
+  setRange(id) {
+    this.range = id;
+    history.replaceState(null, "", `/?site=${encodeURIComponent(this.site.domain)}&range=${id}`);
+    this.root.querySelectorAll("[data-range]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.range === id));
+    this.refresh(["kpis", "funnel"]);
+  }
+
+  async refresh(names) {
+    const loaders = { kpis, trend, opps, funnel, index: indexStatus, health, changes };
+    await Promise.all([...new Set(names)].map((n) => loaders[n](this).catch((e) => this.fail(n, e))));
+  }
+
+  fail(name, e) {
+    const el = this.$(`#${name}`);
+    if (el) el.innerHTML = `<div class="${el.classList.contains("flush") ? "empty" : ""}"><p class="bad">这一块加载失败：${esc(e.message)}</p></div>`;
+  }
+
+  paintStatus() {
+    const j = this.site.jobs;
+    const syncing = this.syncing();
+    this.$("#fresh").textContent = [
+      `搜索数据 ${when(j.gsc.last_ok)}`, `收录巡检 ${when(j.inspections.last_ok)}`,
+      `PageSpeed ${when(j.pagespeed.last_ok)}`, "Umami 实时",
+      this.gscThrough ? `GSC 数据截至 ${shortDate(this.gscThrough)}` : null,
+    ].filter(Boolean).join(" · ");
+    const btn = this.$("#sync");
+    btn.disabled = syncing;
+    btn.innerHTML = syncing ? '<span class="spin" aria-hidden="true"></span>同步中' : "立即同步";
+    const running = KINDS.filter((k) => j[k].running).map((k) => ({ gsc: "搜索数据", inspections: "收录巡检", pagespeed: "PageSpeed" })[k]);
+    const note = !j.gsc.last_ok && !syncing
+      ? `<div class="callout" role="status">还没有成功同步过搜索数据。${esc(j.gsc.detail || "")}</div>`
+      : syncing ? `<div class="callout" role="status">正在同步：${running.join("、")}。完成的部分会自动更新，不用刷新页面。</div>` : "";
+    this.$("#sync-note").innerHTML = note;
+  }
+
+  async sync() {
+    await api(`${this.base}/sync`, { method: "POST" });
+    toast("已开始同步：搜索数据 → 收录巡检 → PageSpeed");
+    this.site = await api(this.base);
+    this.paintStatus();
+    this.watch();
+  }
+
+  watch() {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(async () => {
+      if (!this.alive) return;
+      const prev = this.site;
+      try {
+        this.site = await api(this.base);
+      } catch {
+        return this.watch();
+      }
+      if (!this.alive) return;
+      const i = state.sites.findIndex((s) => s.domain === this.site.domain);
+      if (i >= 0) state.sites[i] = this.site;
+      const done = KINDS.filter((k) => prev.jobs[k].last_ok !== this.site.jobs[k].last_ok
+        || (prev.jobs[k].running && !this.site.jobs[k].running));
+      this.paintStatus();
+      if (done.length) await this.refresh(done.flatMap((k) => DEPENDS[k]));
+      if (this.syncing()) this.watch();
+    }, POLL_MS);
+  }
 }
 
 // ---------------------------------------------------------------- 指标
-async function kpis(root, base, range) {
-  const s = await api(`${base}/summary?range=${range}`);
+async function kpis(b) {
+  const s = await api(`${b.base}/summary?range=${b.range}`);
   const c = s.search.current, p = s.search.previous;
   const t = s.traffic.current || {}, tp = s.traffic.previous || {};
   const failSum = (ev) => Object.entries(ev || {}).filter(([k]) => /fail|error/i.test(k)).reduce((a, [, v]) => a + v, 0);
@@ -95,17 +168,18 @@ async function kpis(root, base, range) {
     ["访客", num(t.visitors), delta(t.visitors, tp.visitors), `上期 ${num(tp.visitors)} · 只统计正式域名`, "Umami"],
     ["失败事件", num(failSum(t.events)), delta(failSum(t.events), failSum(tp.events), { invert: true }), `上期 ${num(failSum(tp.events))}`, "Umami"],
   ];
-  root.querySelector("#kpis").innerHTML = cards.map(([label, v, d, note, src]) => `
+  b.$("#kpis").innerHTML = cards.map(([label, v, d, note, src]) => `
     <div class="kpi"><div class="top"><span>${label}</span><span class="badge ${src.toLowerCase()}">${src}</span></div>
       <div class="val"><b>${esc(v)}</b><span class="${d.cls}">${esc(d.text)}</span></div>
       <span class="muted small">${esc(note)}</span></div>`).join("");
-  root.querySelector("#fresh").textContent += ` · GSC 数据截至 ${shortDate(s.gsc_through)}`;
+  b.gscThrough = s.gsc_through;
+  b.paintStatus();
 }
 
 // ---------------------------------------------------------------- 趋势与构成
-async function trend(root, base) {
-  const weeks = await api(`${base}/trend?weeks=8`);
-  root.querySelector("#trend").innerHTML = `
+async function trend(b) {
+  const weeks = await api(`${b.base}/trend?weeks=8`);
+  b.$("#trend").innerHTML = `
     <div class="row between"><h2>搜索展示与非品牌排名 · 近 8 周</h2>
       <div class="legend"><span><i style="background:var(--accent)"></i>非品牌展示</span><span><i style="background:var(--brand)"></i>品牌展示</span>
         <span><i style="background:var(--anon)"></i>匿名长尾</span><span><i class="line"></i>非品牌平均排名</span></div></div>
@@ -118,7 +192,7 @@ async function trend(root, base) {
     { label: "匿名长尾", value: sum("anonymous", "clicks"), cls: "anon" },
   ];
   const total = parts.reduce((a, p) => a + p.value, 0);
-  root.querySelector("#mix").innerHTML = `
+  b.$("#mix").innerHTML = `
     <h2>点击从哪来 · 近 8 周</h2>${stackBar(parts)}
     ${parts.map((p) => `<div class="row"><i class="seg ${p.cls}" style="width:10px;height:10px;border-radius:2px;display:inline-block"></i>
       <span class="spacer">${p.label}</span><span class="mono">${num(p.value)}</span>
@@ -127,9 +201,10 @@ async function trend(root, base) {
 }
 
 // ---------------------------------------------------------------- 机会清单
-async function opps(root, base) {
+async function opps(b) {
+  const base = b.base;
   const items = await api(`${base}/opportunities`);
-  const el = root.querySelector("#opps");
+  const el = b.$("#opps");
   const draw = () => {
     const shown = items.filter((o) => oppFilter === "all" || o.type === oppFilter);
     const open = items.filter((o) => o.status === "open").length;
@@ -161,9 +236,9 @@ async function opps(root, base) {
 }
 
 // ---------------------------------------------------------------- 漏斗
-async function funnel(root, base, range) {
-  const f = await api(`${base}/pages?range=${range}`);
-  root.querySelector("#funnel").innerHTML = `
+async function funnel(b) {
+  const f = await api(`${b.base}/pages?range=${b.range}`);
+  b.$("#funnel").innerHTML = `
     <div class="card-head"><div><h2>落地页漏斗</h2>
       <p class="muted small">左边来自 Search Console，右边来自 Umami，按 URL 路径拼接。事件数可以多于访问数，因为同一访客会重复操作。</p></div></div>
     <div class="scroll-x"><table>
@@ -177,9 +252,9 @@ async function funnel(root, base, range) {
 }
 
 // ---------------------------------------------------------------- 收录 / 健康
-async function indexStatus(root, base) {
-  const s = await api(`${base}/index-status`);
-  root.querySelector("#index").innerHTML = `
+async function indexStatus(b) {
+  const s = await api(`${b.base}/index-status`);
+  b.$("#index").innerHTML = `
     <div class="row between"><h2>收录状态</h2><span class="muted small">巡检于 ${when(s.checked_at)}</span></div>
     ${s.total ? `<div class="row"><span class="mono" style="font-size:28px">${s.indexed}<span class="muted" style="font-size:18px"> / ${s.total}</span></span>
       <span class="muted">sitemap URL 已收录</span></div>
@@ -189,14 +264,14 @@ async function indexStatus(root, base) {
     <p class="muted small">以逐个 URL 的 Inspection 结果为准，不用 sitemap 接口的 indexed 字段（Google 已不维护）。</p>`;
 }
 
-async function health(root, base) {
-  const h = await api(`${base}/health`);
+async function health(b) {
+  const h = await api(`${b.base}/health`);
   const ps = (strategy) => h.pagespeed.filter((r) => r.strategy === strategy && path(r.url) === "/")[0] || h.pagespeed.find((r) => r.strategy === strategy);
   const card = (label, v, note, cls = "") => `<div class="kpi" style="padding:12px 14px"><span class="muted small">${label}</span>
     <b class="mono ${cls}" style="font-size:22px;font-weight:500">${esc(v)}</b><span class="muted small">${esc(note)}</span></div>`;
   const m = ps("mobile"), d = ps("desktop");
   const fails = Object.entries(h.fail_events_28d);
-  root.querySelector("#health").innerHTML = `
+  b.$("#health").innerHTML = `
     <h2>站点健康</h2>
     <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
       ${card("PageSpeed 手机", m?.performance ?? "—", m ? `LCP ${(m.lcp_ms / 1000).toFixed(1)} s` : "未测试", m && m.performance < 90 ? "warn" : "")}
@@ -207,9 +282,10 @@ async function health(root, base) {
 }
 
 // ---------------------------------------------------------------- 变更日志
-async function changes(root, base) {
+async function changes(b) {
+  const base = b.base;
   const list = await api(`${base}/changelog`);
-  const el = root.querySelector("#changes");
+  const el = b.$("#changes");
   el.innerHTML = `
     <div class="card-head"><div><h2>变更日志</h2><p class="muted small">每次改动记一条，几周后对照数据才知道改动有没有用。也可以通过 API 写入。</p></div>
       <button class="btn" type="button" id="add-change">添加记录</button></div>
@@ -230,7 +306,7 @@ async function changes(root, base) {
     const body = Object.fromEntries(new FormData(dlg.querySelector("form")));
     await api(`${base}/changelog`, { method: "POST", body: { ...body, page: body.page || null } });
     toast("已记录");
-    changes(root, base);
+    changes(b);
   });
 }
 
@@ -252,7 +328,7 @@ function apiCard(domain) {
       <h2>API · 给 AI 用</h2>
       <p class="muted">页面上的每一块都来自这些接口，接口还返回页面放不下的明细。在「设置」里创建 Token，注册成 skill 后就能在对话里直接问。</p>
       <p class="muted small">鉴权：<span class="mono" style="color:#fff">Authorization: Bearer smk_…</span></p>
-      <div class="row"><a class="btn" href="/settings#tokens">管理 Token</a><a class="btn" href="/api/docs" target="_blank" rel="noopener">完整接口文档</a></div>
+      <div class="row"><a class="btn" href="/settings/tokens">管理 Token</a><a class="btn" href="/api/docs" target="_blank" rel="noopener">完整接口文档</a></div>
     </div>
     <div class="eps">${eps.map(([m, p, desc]) => `<div class="ep"><span class="m ${m.toLowerCase()}">${m}</span>
       <span class="p">${esc(p)}</span><span class="d">${desc}</span></div>`).join("")}</div>

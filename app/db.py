@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY, domain TEXT NOT NULL UNIQUE,
   umami_website_id TEXT, gsc_property TEXT, hostname TEXT NOT NULL,
   brand_terms TEXT NOT NULL DEFAULT '[]', funnel_events TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL
+  position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS gsc_daily (
   site_id INTEGER NOT NULL, date TEXT NOT NULL,
@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS gsc_rows (
   clicks INTEGER NOT NULL, impressions INTEGER NOT NULL, position REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS gsc_rows_site_date ON gsc_rows (site_id, date);
+CREATE TABLE IF NOT EXISTS gsc_country (
+  site_id INTEGER NOT NULL, date TEXT NOT NULL, query TEXT NOT NULL, country TEXT NOT NULL,
+  clicks INTEGER NOT NULL, impressions INTEGER NOT NULL, position REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS gsc_country_site_date ON gsc_country (site_id, date);
 CREATE TABLE IF NOT EXISTS inspections (
   site_id INTEGER NOT NULL, url TEXT NOT NULL, coverage TEXT NOT NULL,
   last_crawl TEXT, google_canonical TEXT, checked_at TEXT NOT NULL,
@@ -74,6 +79,11 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 """
 
+# 已上线的库不会因为 CREATE IF NOT EXISTS 获得新列：在这里补，(表, 列, 定义, 回填 SQL)
+MIGRATIONS = [
+    ("sites", "position", "INTEGER NOT NULL DEFAULT 0", "UPDATE sites SET position = id"),
+]
+
 
 class DB:
     def __init__(self, path: str):
@@ -82,6 +92,11 @@ class DB:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self.conn() as c:
             c.executescript(SCHEMA)
+            for table, col, ddl, backfill in MIGRATIONS:
+                cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+                if col not in cols:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+                    c.execute(backfill)
 
     @contextmanager
     def conn(self) -> Iterator[sqlite3.Connection]:

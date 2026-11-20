@@ -47,7 +47,7 @@ class Scheduler:
         return datetime.now(UTC) - datetime.fromisoformat(last.replace("Z", "+00:00")) > PERIODS[kind]
 
     async def tick(self) -> None:
-        for site in self.db.all("SELECT * FROM sites"):
+        for site in self.db.all("SELECT * FROM sites ORDER BY position, id"):
             for kind in PERIODS:  # gsc 在前：pagespeed 依赖它选出的热门页面
                 if self.due(site["id"], kind):
                     try:

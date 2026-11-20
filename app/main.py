@@ -97,6 +97,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     for p in PAGES:
         app.add_api_route(p, page, include_in_schema=False)
+    app.add_api_route("/settings/{section}", page, include_in_schema=False)
     return app
 
 

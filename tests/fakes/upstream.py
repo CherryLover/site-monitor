@@ -66,20 +66,26 @@ def service_account_json(base: str, email: str = SA_EMAIL) -> str:
 
 
 # ---------------------------------------------------------------- 搜索数据
-QUERIES = [  # (query, page, 每日展示, 排名, 每日点击)
-    ("acme", "/", 6, 1.2, 4),
-    ("acme converter", "/", 2, 1.5, 1),
-    ("office to markdown", "/", 6, 6.5, 1),
-    ("word to markdown", "/guides/", 2, 70.0, 0),
-    ("word to markdown", "/docx/", 1, 66.0, 0),
-    ("pdf to md", "/pdf/", 1, 45.0, 0),
-    ("markdown guide", "/guides/compare/", 2, 14.0, 0),
+QUERIES = [  # (query, page, 每日展示, 排名, 每日点击, 国家)
+    ("acme", "/", 6, 1.2, 4, "usa"),
+    ("acme converter", "/", 2, 1.5, 1, "usa"),
+    ("office to markdown", "/", 6, 6.5, 1, "usa"),
+    ("word to markdown", "/guides/", 2, 70.0, 0, "usa"),
+    ("word to markdown", "/docx/", 1, 66.0, 0, "gbr"),
+    ("pdf to md", "/pdf/", 1, 45.0, 0, "ind"),
+    ("markdown guide", "/guides/compare/", 2, 14.0, 0, "usa"),
+    # 德语长尾：单个词过不了逐词门槛，合起来是「德语市场」——站点没有 /de/，应当生成市场缺口
+    ("word zu markdown", "/docx/", 1, 70.0, 0, "deu"),
+    ("excel zu markdown", "/docx/", 1, 66.0, 0, "aut"),
+    # 印尼语需求同样排名靠后，但站点已有 /id/ 版本，不应生成市场缺口
+    ("pdf ke markdown", "/pdf/", 1, 40.0, 0, "idn"),
 ]
 INSPECT = {
     "/": "Submitted and indexed",
     "/docx/": "Submitted and indexed",
     "/pdf/": "Submitted and indexed",
     "/guides/": "Submitted and indexed",
+    "/id/": "Submitted and indexed",
     "/guides/compare/": "Discovered - currently not indexed",
     "/new/": "URL is unknown to Google",
     "/flaky/": "503",  # 永远 503：验证单个 URL 失败不会拖垮整轮巡检
@@ -89,23 +95,15 @@ INSPECT = {
 def gsc_rows(dims: list[str], start: str, end: str, base: str) -> list[dict]:
     d0, d1 = date.fromisoformat(start), min(date.fromisoformat(end), date.today() - timedelta(days=2))
     days = [d0 + timedelta(days=i) for i in range((d1 - d0).days + 1)]
+    row = lambda keys, c, i, pos: {"keys": keys, "clicks": c, "impressions": i, "position": pos}  # noqa: E731
     if dims == ["date"]:
         anon = 3
-        return [
-            {
-                "keys": [str(d)],
-                "clicks": sum(q[4] for q in QUERIES),
-                "impressions": sum(q[2] for q in QUERIES) + anon,
-                "position": 8.0,
-            }
-            for d in days
-        ]
+        clicks, impr = sum(q[4] for q in QUERIES), sum(q[2] for q in QUERIES) + anon
+        return [row([str(d)], clicks, impr, 8.0) for d in days]
     if dims == ["date", "query", "page"]:
-        return [
-            {"keys": [str(d), q, f"{base}{p}"], "clicks": c, "impressions": i, "position": pos}
-            for d in days
-            for q, p, i, pos, c in QUERIES
-        ]
+        return [row([str(d), q, f"{base}{p}"], c, i, pos) for d in days for q, p, i, pos, c, _ in QUERIES]
+    if dims == ["date", "query", "country"]:
+        return [row([str(d), q, cc], c, i, pos) for d in days for q, _, i, pos, c, cc in QUERIES]
     return []
 
 

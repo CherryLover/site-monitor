@@ -41,5 +41,6 @@ site-monitor/
 
 ## 变更日志
 
+- 2026-11-20 概览局部刷新；设置页二级菜单 + 站点多维表格 + 拖拽排序（sites.position）；国家维度同步 + 市场缺口规则。
 - 2026-11-20 部署到 docker-test（/root/docker-container/site-monitor），nginx-proxy-manager 反代 gdata.flyooo.uk。
 - 2026-11-19 初版：Pocket ID 登录、四步引导、同步与调度、概览/设置页、API Token、本地 CI + GHCR。

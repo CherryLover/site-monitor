@@ -62,7 +62,14 @@ def public(db: DB, site: dict, scheduler) -> dict:
             "running": scheduler.is_running(site["id"], k),
             "last_ok": sync.last_ok(db, site["id"], k),
         }
+    number = db.one(
+        "SELECT COUNT(*) + 1 AS n FROM sites WHERE position < ? OR (position = ? AND id < ?)",
+        site["position"],
+        site["position"],
+        site["id"],
+    )["n"]
     return {
+        "number": number,
         "domain": site["domain"],
         "umami_website_id": site["umami_website_id"],
         "gsc_property": site["gsc_property"],
@@ -88,7 +95,10 @@ def kick(request: Request, site: dict, kinds=KINDS) -> None:
 @router.get("/sites", dependencies=[Depends(require_principal)])
 async def list_sites(request: Request):
     db = request.app.state.db
-    return [public(db, s, request.app.state.scheduler) for s in db.all("SELECT * FROM sites ORDER BY id")]
+    return [
+        public(db, s, request.app.state.scheduler)
+        for s in db.all("SELECT * FROM sites ORDER BY position, id")
+    ]
 
 
 @router.get("/sites/{domain}", dependencies=[Depends(require_principal)])
@@ -108,8 +118,8 @@ async def create_site(body: SiteIn, request: Request):
         raise HTTPException(409, f"{domain} 已在监控中")
     terms = [t.strip() for t in body.brand_terms if t.strip()] or setup.default_brand_terms(domain)
     db.run(
-        "INSERT INTO sites (domain, umami_website_id, gsc_property, hostname, brand_terms, funnel_events, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sites (domain, umami_website_id, gsc_property, hostname, brand_terms, funnel_events, "
+        "position, created_at) VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM sites), ?)",
         domain,
         body.umami_website_id,
         body.gsc_property,
@@ -121,6 +131,25 @@ async def create_site(body: SiteIn, request: Request):
     site = get_site(db, domain)
     kick(request, site)
     return public(db, site, request.app.state.scheduler)
+
+
+class OrderIn(BaseModel):
+    domains: list[str]
+
+
+@router.put("/sites/order", dependencies=[Depends(require_user)])
+async def reorder_sites(body: OrderIn, request: Request):
+    """拖拽排序：传入全部站点的新顺序，序号和页面上的顺序都以它为准。"""
+    db: DB = request.app.state.db
+    wanted = [setup.bare(d) for d in body.domains]
+    existing = {r["domain"] for r in db.all("SELECT domain FROM sites")}
+    if sorted(wanted) != sorted(existing):
+        raise HTTPException(422, "domains 必须恰好包含全部站点，各一次")
+    with db.conn() as c:
+        c.executemany(
+            "UPDATE sites SET position = ? WHERE domain = ?", [(i + 1, d) for i, d in enumerate(wanted)]
+        )
+    return await list_sites(request)
 
 
 @router.patch("/sites/{domain}", dependencies=[Depends(require_user)])
@@ -141,7 +170,16 @@ async def delete_site(domain: str, request: Request):
     db: DB = request.app.state.db
     sid = get_site(db, domain)["id"]
     with db.conn() as c:
-        for table in ("gsc_daily", "gsc_rows", "inspections", "psi_runs", "changelog", "opp_state", "jobs"):
+        for table in (
+            "gsc_daily",
+            "gsc_rows",
+            "gsc_country",
+            "inspections",
+            "psi_runs",
+            "changelog",
+            "opp_state",
+            "jobs",
+        ):
             c.execute(f"DELETE FROM {table} WHERE site_id = ?", (sid,))
         c.execute("DELETE FROM sites WHERE id = ?", (sid,))
 

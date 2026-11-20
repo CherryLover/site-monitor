@@ -82,7 +82,7 @@ export function trendChart(weeks) {
       </div>
     </div>`).join("");
   const dots = ranks.map((r) => `
-    <div class="dot" style="left:calc(${((r.i + 0.5) / n) * 100}% - 4px);top:${(y(r.p) - 4).toFixed(1)}px">
+    <div class="rank-dot" style="left:calc(${((r.i + 0.5) / n) * 100}% - 4px);top:${(y(r.p) - 4).toFixed(1)}px">
       <span>#${r.p}</span>
     </div>`).join("");
   const desc = ranks.length ? `非品牌平均排名从 ${ranks[0].p} 到 ${ranks[ranks.length - 1].p}` : "暂无非品牌排名数据";
