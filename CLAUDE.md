@@ -19,7 +19,7 @@ site-monitor/
 ├── tests/               假上游 + 接口测试 + Playwright 端到端（见 tests/CLAUDE.md）
 ├── scripts/ci.sh        本地 CI = GitHub Actions 跑的同一个脚本
 ├── .githooks/pre-push   push 前自动跑 scripts/ci.sh
-├── deploy/              服务器上的 docker-compose
+├── deploy/              服务器上的 docker-compose + update.sh（匿名拉镜像、重建、健康检查）
 ├── Dockerfile           运行时镜像（uv，非 root，/data 卷）
 └── .github/workflows/   测试 → main 推送 ghcr.io/cherrylover/site-monitor
 ```
@@ -41,4 +41,5 @@ site-monitor/
 
 ## 变更日志
 
+- 2026-11-20 部署到 docker-test（/root/docker-container/site-monitor），nginx-proxy-manager 反代 gdata.flyooo.uk。
 - 2026-11-19 初版：Pocket ID 登录、四步引导、同步与调度、概览/设置页、API Token、本地 CI + GHCR。

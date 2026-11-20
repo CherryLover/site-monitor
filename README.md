@@ -64,11 +64,14 @@ main 分支构建多架构镜像推送到 `ghcr.io/cherrylover/site-monitor`（�
 ## 部署
 
 ```bash
-# 服务器上
-mkdir site-monitor && cd site-monitor
+# 服务器上（首次）
+mkdir -p /root/docker-container/site-monitor && cd $_
 curl -O https://raw.githubusercontent.com/CherryLover/site-monitor/main/deploy/docker-compose.yml
-vi .env            # 参照 .env.example
-docker compose up -d
+curl -O https://raw.githubusercontent.com/CherryLover/site-monitor/main/deploy/update.sh && chmod +x update.sh
+vi .env && chmod 600 .env    # 参照 .env.example
+./update.sh                  # 之后每次更新也只跑这一句
 ```
 
-服务只监听 `127.0.0.1:8700`，由反向代理提供 HTTPS。数据在 `./data/site-monitor.db`。
+- 服务只监听 `127.0.0.1:8700`，由反向代理（nginx-proxy-manager 等）提供 HTTPS。
+- 数据在 `./data/site-monitor.db`；容器以 uid 10001 运行，`update.sh` 会处理目录权限。
+- `update.sh` 用独立的空 `DOCKER_CONFIG` 匿名拉取公开镜像，不受本机其他 ghcr.io 登录凭证影响。
