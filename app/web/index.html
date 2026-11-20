@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Site Monitor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232448C9' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l3-8 4 16 3-8h4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+        Site Monitor
+      </a>
+      <nav id="site-tabs" class="tabs" aria-label="站点"></nav>
+      <div class="spacer"></div>
+      <nav class="tabs" aria-label="主导航">
+        <a href="/" data-nav="/">概览</a>
+        <a href="/settings" data-nav="/settings">设置</a>
+      </nav>
+      <div id="user" class="user"></div>
+    </div>
+  </header>
+  <main id="root" class="wrap" aria-live="polite"><p class="muted">加载中…</p></main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

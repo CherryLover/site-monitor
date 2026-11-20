@@ -1,0 +1,15 @@
+# ============================================================================
+#  服务器部署：拉取 GitHub Actions 构建的公开镜像，数据落在 ./data
+#  用法：在服务器上放好 .env（参照 .env.example），然后 docker compose up -d
+# ============================================================================
+services:
+  site-monitor:
+    image: ghcr.io/cherrylover/site-monitor:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SM_DB_PATH: /data/site-monitor.db
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8700:8700"   # 只对本机开放，由反向代理（Caddy / Nginx）对外提供 HTTPS
