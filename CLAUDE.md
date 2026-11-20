@@ -31,6 +31,7 @@ site-monitor/
 - **GSC 落库、Umami 实时**：GSC 有 2–3 天延迟且有配额，每天同步一次；Umami 自建、无配额，查询时实时取（60 秒缓存）。
 - **只信逐 URL 巡检**：sitemap 接口的 `indexed` 字段 Google 已不维护，收录状态一律来自 URL Inspection。
 - **调度器在进程内**：单进程单文件，不需要 cron / 队列。
+- **已处理 = 观察，不是关闭**：问题只在数据证明解决后才算解决；规则窗口仍含修复前数据时机会照常生成，标 watching。
 
 ## 开发规范
 
@@ -41,6 +42,7 @@ site-monitor/
 
 ## 变更日志
 
+- 2026-11-20 「已处理」改为观察期：每条观察每天用修复前 28 天做基线自动对比，给出 等待数据 / 见效中 / 已验证 / 未见改善 / 复发，永不删除；收录机会 key 改为稳定的 index:sitemap 并快照 URL 范围。
 - 2026-11-20 概览局部刷新；设置页二级菜单 + 站点多维表格 + 拖拽排序（sites.position）；国家维度同步 + 市场缺口规则。
 - 2026-11-20 部署到 docker-test（/root/docker-container/site-monitor），nginx-proxy-manager 反代 gdata.flyooo.uk。
 - 2026-11-19 初版：Pocket ID 登录、四步引导、同步与调度、概览/设置页、API Token、本地 CI + GHCR。

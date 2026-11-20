@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS opp_state (
   site_id INTEGER NOT NULL, key TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY (site_id, key)
 );
+CREATE TABLE IF NOT EXISTS watches (
+  id INTEGER PRIMARY KEY, site_id INTEGER NOT NULL, key TEXT NOT NULL, type TEXT NOT NULL,
+  target TEXT NOT NULL, evidence TEXT NOT NULL, scope TEXT, history TEXT NOT NULL,
+  fixed_at TEXT NOT NULL, verdict TEXT NOT NULL, summary TEXT, verified_at TEXT, checked_at TEXT,
+  created_at TEXT NOT NULL, UNIQUE (site_id, key)
+);
+CREATE TABLE IF NOT EXISTS watch_points (
+  watch_id INTEGER NOT NULL REFERENCES watches(id) ON DELETE CASCADE, date TEXT NOT NULL,
+  verdict TEXT NOT NULL, summary TEXT, before TEXT, after TEXT,
+  PRIMARY KEY (watch_id, date)
+);
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY, site_id INTEGER, kind TEXT NOT NULL,
   started_at TEXT NOT NULL, finished_at TEXT, ok INTEGER, detail TEXT

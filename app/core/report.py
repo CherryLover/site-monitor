@@ -16,6 +16,13 @@ from app.db import DB
 from app.upstream.umami import window_ms
 
 RANGES = {"7d": 7, "28d": 28, "8w": 56, "90d": 90}
+# URL Inspection 里这些状态都算「正常」：已收录，或本来就不该单独收录
+NOT_INDEXED_OK = {
+    "Submitted and indexed",
+    "Indexed, not submitted in sitemap",
+    "Page with redirect",
+    "Alternate page with proper canonical tag",
+}
 _cache: dict[tuple, tuple[float, object]] = {}
 CACHE_SECONDS = 60
 

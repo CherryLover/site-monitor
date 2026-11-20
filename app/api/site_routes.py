@@ -178,6 +178,7 @@ async def delete_site(domain: str, request: Request):
             "psi_runs",
             "changelog",
             "opp_state",
+            "watches",
             "jobs",
         ):
             c.execute(f"DELETE FROM {table} WHERE site_id = ?", (sid,))

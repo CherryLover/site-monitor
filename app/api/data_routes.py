@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from app.api.site_routes import get_site
 from app.auth.deps import require_principal
-from app.core import opportunities, report
+from app.core import opportunities, report, watch
 from app.db import now_iso
 
 router = APIRouter(prefix="/api/v1/sites/{domain}", dependencies=[Depends(require_principal)])
@@ -77,11 +77,42 @@ async def opps(domain: str, request: Request):
 
 @router.patch("/opportunities")
 async def opp_status(domain: str, body: OppPatch, request: Request):
-    if body.status not in ("open", "done", "ignored"):
-        raise HTTPException(422, "status 只能是 open / done / ignored")
+    if body.status not in ("open", "ignored"):
+        raise HTTPException(422, "status 只能是 open / ignored；已处理请 POST /watches 建立观察")
     db, _, site = ctx(request, domain)
     opportunities.set_status(db, site["id"], body.key, body.status)
     return {"key": body.key, "status": body.status}
+
+
+# ---------------------------------------------------------------- 观察（已处理 → 持续验证）
+class WatchIn(BaseModel):
+    key: str
+    note: str
+    fixed_at: str | None = None
+
+
+@router.get("/watches")
+async def watches(domain: str, request: Request):
+    """每条观察：处理记录、修复前后同口径对比、当前判定、按天的判定时间线。"""
+    db, clients, site = ctx(request, domain)
+    firing = {o["key"] for o in await opportunities.build(db, clients, site)}
+    return await watch.listing(db, clients, site, firing)
+
+
+@router.post("/watches", status_code=201)
+async def add_watch(domain: str, body: WatchIn, request: Request):
+    """标记已处理。同一个 key 再次提交 = 再次处理：追加记录，观察期从新日期重算。"""
+    db, clients, site = ctx(request, domain)
+    day = body.fixed_at or str(date.today())
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or not body.note.strip():
+        raise HTTPException(422, "需要 note（做了什么），fixed_at 格式为 YYYY-MM-DD")
+    opps = {o["key"]: o for o in await opportunities.build(db, clients, site)}
+    try:
+        wid = watch.mark(db, site["id"], opps.get(body.key), body.key, body.note.strip(), day)
+    except watch.WatchError as e:
+        raise HTTPException(404, str(e)) from None
+    w = db.one("SELECT * FROM watches WHERE id = ?", wid)
+    return watch.public(db, await watch.evaluate(db, clients, site, w), set(opps))
 
 
 # ---------------------------------------------------------------- 明细

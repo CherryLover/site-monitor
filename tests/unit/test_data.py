@@ -76,10 +76,12 @@ def test_every_opportunity_rule_fires(ready):
 
 def test_opportunity_status_roundtrip(ready):
     key = "rank:q:office to markdown"
-    assert ready.patch(f"{S}/opportunities", json={"key": key, "status": "done"}).status_code == 200
+    assert ready.patch(f"{S}/opportunities", json={"key": key, "status": "ignored"}).status_code == 200
     o = next(o for o in ready.get(f"{S}/opportunities").json() if o["key"] == key)
-    assert o["status"] == "done"
-    assert ready.patch(f"{S}/opportunities", json={"key": key, "status": "weird"}).status_code == 422
+    assert o["status"] == "ignored"
+    # 「已处理」不再是一个可以直接设置的状态：必须建观察
+    r = ready.patch(f"{S}/opportunities", json={"key": key, "status": "done"})
+    assert r.status_code == 422 and "/watches" in r.json()["detail"]
 
 
 def test_events_breakdown(ready):

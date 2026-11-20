@@ -4,6 +4,7 @@
 #  每 10 分钟醒一次，看每个站点的每类作业「距离上次成功」是否超过周期。
 #  只有一个进程、一个 SQLite 文件，不需要 cron、队列或分布式锁。
 #  同一 (站点, 作业) 同时只跑一份：手动触发和定时触发共用这把锁。
+#  每轮最后给到期的观察（core/watch）各量一次：每条每天只落一个点。
 # ============================================================================
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from app.core import sync
+from app.core import sync, watch
 from app.core.clients import Clients, NotConfigured
 from app.db import DB
 
@@ -54,6 +55,7 @@ class Scheduler:
                         await self.run(site, kind)
                     except NotConfigured:
                         return  # 引导流程没走完：整轮跳过
+            await watch.refresh_due(self.db, self.clients, site)
 
     async def _loop(self) -> None:
         while True:

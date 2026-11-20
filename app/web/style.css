@@ -235,3 +235,27 @@ tr.dragging { opacity: 0.45; background: var(--accent-soft) !important; }
 .cell-input.saved { border-color: var(--good); background: var(--good-soft); }
 .cell-input.error { border-color: var(--bad); background: var(--bad-soft); }
 .drag svg { pointer-events: none; }
+
+/* ---------------------------------------------------------------- 机会清单 · 观察 */
+.filters { padding: 0 22px 12px; flex-wrap: wrap; }
+.pill.sm { font-size: 12px; padding: 2px 9px; }
+.legend-v { padding: 12px 22px 10px; border-top: 1px solid #F1F1EC; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.item .full { flex: 1 1 100%; }
+.mark-form { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 10px 14px; align-items: end;
+  background: var(--line-soft); border-radius: 10px; padding: 14px; }
+.mark-form .row, .mark-form p { grid-column: 1 / -1; margin: 0; }
+.item.watch { align-items: flex-start; }
+.item.watch .col { flex: 0 0 170px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.hist { margin: 4px 0 0; padding-left: 16px; font-size: 13px; color: var(--ink-2); }
+.hist li { margin: 2px 0; }
+.dots-line { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 6px; }
+.dots-line .lbl { font-size: 12px; color: var(--muted); margin-right: 4px; }
+.dots-line .v { width: 10px; height: 10px; border-radius: 2px; background: #D9DAD4; }
+.dots-line .v.ok { background: var(--good); } .dots-line .v.run { background: var(--accent); }
+.dots-line .v.warn { background: #E39A4F; } .dots-line .v.err { background: var(--bad); }
+.chip.warn { background: var(--warn-soft); color: #8A3D07; }
+@media (max-width: 640px) {
+  .mark-form { grid-template-columns: 1fr; }
+  .item.watch .col { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .filters, .legend-v { padding-left: 16px; padding-right: 16px; }
+}

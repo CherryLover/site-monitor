@@ -101,15 +101,34 @@ def test_first_login_to_api_token(page: Page, app_url: str, fake: str):
     expect(page.get_by_role("button", name="立即同步")).to_be_enabled(timeout=40000)
     assert page.evaluate("window.__noReload") == 1
 
-    # ---- 机会清单：筛选 + 标记已处理（持久化）
-    page.get_by_role("button", name=re.compile("^抢词")).click()
-    expect(page.locator("#opps .item")).to_have_count(1)
-    page.get_by_role("button", name=re.compile("^全部")).click()
-    first = page.locator("#opps .item").first
-    first.get_by_role("button", name="标记已处理").click()
-    expect(page.locator("#opps .item.dim")).to_have_count(1)
+    # ---- 机会清单：筛选；标记已处理 = 进入观察，不消失、可再次处理
+    opps = page.locator("#opps")
+    opps.get_by_role("button", name=re.compile("^抢词")).click()
+    expect(opps.locator(".item")).to_have_count(1)
+    opps.get_by_role("button", name=re.compile("^全部")).click()
+    target = opps.locator(".item").first.locator(".t b").inner_text()
+    opps.locator(".item").first.get_by_role("button", name="标记已处理").click()
+    opps.get_by_label("做了什么").fill("首页 title 前置关键词")
+    opps.get_by_role("button", name="标记已处理，开始观察").click()
+    expect(opps.get_by_role("tab", name=re.compile("^观察中"))).to_have_attribute("aria-selected", "true")
+    card = opps.locator(".item.watch").first
+    expect(card).to_contain_text(target)
+    expect(card).to_contain_text("首页 title 前置关键词")
+    expect(card.locator(".dots-line .v")).to_have_count(1)
+    expect(card.locator(".chip").first).to_contain_text(re.compile("等待数据|见效中|已验证|未见改善|复发"))
+    # 再次处理：追加记录，仍是同一张卡
+    card.get_by_role("button", name="再次处理").click()
+    opps.get_by_label("这次又做了什么").fill("加内链")
+    opps.get_by_role("button", name="记录并重新观察").click()
+    expect(opps.locator(".item.watch")).to_have_count(1)
+    expect(opps.locator(".item.watch .hist li")).to_have_count(2)
+    assert page.evaluate("window.__noReload") == 1  # 标记与再次处理都是局部刷新
+    # 刷新后依然在观察中；待处理里不再出现它
     page.reload()
-    expect(page.locator("#opps .item.dim")).to_have_count(1)
+    page.locator("#opps").get_by_role("tab", name=re.compile("^观察中")).click()
+    expect(page.locator("#opps .item.watch")).to_have_count(1)
+    page.locator("#opps").get_by_role("tab", name=re.compile("^待处理")).click()
+    expect(page.locator("#opps .item", has_text=target)).to_have_count(0)
 
     # ---- 变更日志
     page.get_by_role("button", name="添加记录").click()

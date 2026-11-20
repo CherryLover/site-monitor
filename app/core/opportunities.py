@@ -2,7 +2,8 @@
 #  opportunities —— 把数据翻译成「下一步该做什么」
 #
 #  每条规则 = 一个信号 + 一个固定动作。规则只读数据，不写库；
-#  处理状态（open / done / ignored）按稳定的 key 单独存在 opp_state。
+#  忽略状态按稳定的 key 存在 opp_state；「已处理」不在这里，而是建一条观察（core/watch），
+#  被观察的机会照常生成（规则仍在触发说明数据还没追上），只是状态标成 watching。
 #  样本门槛统一用 MIN_IMPR：展示太少的信号是噪声，不生成机会。
 # ============================================================================
 from __future__ import annotations
@@ -10,26 +11,21 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from app.core import markets, report
+from app.core import markets, report, watch
 from app.db import DB, now_iso
 
 WINDOW_DAYS = 28
 MIN_IMPR = 20
 FAIL_EVENT = re.compile(r"fail|error", re.I)
-NOT_INDEXED_OK = {
-    "Submitted and indexed",
-    "Indexed, not submitted in sitemap",
-    "Page with redirect",
-    "Alternate page with proper canonical tag",
-}
+NOT_INDEXED_OK = report.NOT_INDEXED_OK
 
 
 def path(url: str) -> str:
     return urlparse(url).path or "/"
 
 
-def item(key, kind, target, evidence, action, impact) -> dict:
-    return {
+def item(key, kind, target, evidence, action, impact, scope=None) -> dict:
+    out = {
         "key": key,
         "type": kind,
         "target": target,
@@ -37,6 +33,9 @@ def item(key, kind, target, evidence, action, impact) -> dict:
         "action": action,
         "impact": impact,
     }
+    if scope is not None:
+        out["scope"] = scope  # 观察的对象范围（例如未收录的那几个 URL），建观察时一并快照
+    return out
 
 
 # ---------------------------------------------------------------- 搜索类规则
@@ -109,12 +108,13 @@ def index_rule(db: DB, site_id: int) -> list[dict]:
     ev = " · ".join(f"{path(r['url'])}（{r['coverage']}）" for r in bad[:4]) + (" …" if len(bad) > 4 else "")
     return [
         item(
-            f"index:{len(bad)}",
+            "index:sitemap",
             "index",
             f"{len(bad)} 个 sitemap URL 未收录",
             ev,
             "检查这些页面的内链入口和内容质量，然后在 Search Console 里请求编入索引。",
             "中" if len(bad) > 3 else "低",
+            scope=[r["url"] for r in bad],
         )
     ]
 
@@ -162,9 +162,10 @@ async def build(db: DB, clients, site: dict) -> list[dict]:
         r["key"]: r["status"]
         for r in db.all("SELECT key, status FROM opp_state WHERE site_id = ?", site["id"])
     }
+    watched = watch.watched_keys(db, site["id"])
     rank = {"高": 0, "中": 1, "低": 2}
     for it in items:
-        it["status"] = states.get(it["key"], "open")
+        it["status"] = "watching" if it["key"] in watched else states.get(it["key"], "open")
     return sorted(items, key=lambda it: (it["status"] != "open", rank[it["impact"]]))
 
 

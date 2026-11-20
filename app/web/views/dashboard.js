@@ -8,6 +8,7 @@
 // ============================================================================
 import { currentSite, go, state } from "/static/app.js";
 import { api, delta, esc, num, path, shortDate, stackBar, toast, trendChart, when } from "/static/ui.js";
+import { bindMarkForms, markForm, watchCard, watchLegend } from "/static/views/watch.js";
 
 const RANGES = [["7d", "7 天"], ["28d", "28 天"], ["8w", "8 周"], ["90d", "90 天"]];
 const TYPES = { rank: "排名", cannibal: "抢词", gap: "缺页", market: "市场", index: "收录", bug: "故障", data: "数据" };
@@ -16,6 +17,7 @@ const KINDS = ["gsc", "inspections", "pagespeed"];
 const DEPENDS = { gsc: ["kpis", "trend", "opps", "funnel"], inspections: ["index", "opps"], pagespeed: ["health"] };
 const POLL_MS = 4000;
 let oppFilter = "all";
+let oppView = "open";
 let board = null;
 
 const param = (k, d) => new URLSearchParams(location.search).get(k) || d;
@@ -201,38 +203,74 @@ async function trend(b) {
 }
 
 // ---------------------------------------------------------------- 机会清单
+//  三个视图：待处理 / 观察中 / 已忽略。「标记已处理」= 建一条观察，不是关掉；
+//  观察中的卡片持续显示修复前后的数据对比和每日判定，直到数据证明问题解决。
 async function opps(b) {
   const base = b.base;
-  const items = await api(`${base}/opportunities`);
+  let [items, watches] = await Promise.all([api(`${base}/opportunities`), api(`${base}/watches`)]);
   const el = b.$("#opps");
+  let marking = null;
   const draw = () => {
-    const shown = items.filter((o) => oppFilter === "all" || o.type === oppFilter);
-    const open = items.filter((o) => o.status === "open").length;
+    const open = items.filter((o) => o.status === "open");
+    const ignored = items.filter((o) => o.status === "ignored");
+    const views = [["open", "待处理", open.length], ["watching", "观察中", watches.length], ["ignored", "已忽略", ignored.length]];
+    const list = oppView === "watching" ? watches : oppView === "ignored" ? ignored : open;
+    const shown = oppView === "open" ? list.filter((o) => oppFilter === "all" || o.type === oppFilter) : list;
     el.innerHTML = `
-      <div class="card-head"><div><h2>机会清单</h2><p class="muted small">按规则从最近 28 天的数据生成 · 待处理 ${open} / 共 ${items.length}</p></div>
-        <div class="row" role="group" aria-label="按类型筛选">${[["all", "全部"], ...Object.entries(TYPES)].map(([id, l]) => {
-          const n = id === "all" ? items.length : items.filter((o) => o.type === id).length;
-          return n || id === "all" ? `<button class="pill" type="button" data-f="${id}" aria-pressed="${oppFilter === id}">${l} <span class="mono">${n}</span></button>` : "";
-        }).join("")}</div></div>
-      <div class="list">${shown.length ? shown.map((o) => `
-        <div class="item ${o.status !== "open" ? "dim" : ""}">
-          <div style="flex:0 0 52px"><span class="tag ${o.type}">${TYPES[o.type]}</span></div>
-          <div class="t"><b>${esc(o.target)}</b><span class="ev">${esc(o.evidence)}</span></div>
-          <div class="a">${esc(o.action)}</div>
-          <div class="row"><span class="small ${IMPACT_CLS[o.impact]}"><b>影响 ${o.impact}</b></span>
-            ${o.status === "open"
-              ? `<button class="btn" type="button" data-k="${esc(o.key)}" data-s="done">标记已处理</button>
-                 <button class="btn" type="button" data-k="${esc(o.key)}" data-s="ignored">忽略</button>`
-              : `<button class="btn" type="button" data-k="${esc(o.key)}" data-s="open">${o.status === "done" ? "已处理" : "已忽略"} · 撤销</button>`}
-          </div></div>`).join("") : '<div class="empty">没有符合条件的机会。数据量太小时规则不会触发，这是正常的。</div>'}</div>`;
-    el.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => { oppFilter = b.dataset.f; draw(); }));
-    el.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", async () => {
-      await api(`${base}/opportunities`, { method: "PATCH", body: { key: b.dataset.k, status: b.dataset.s } });
-      items.find((o) => o.key === b.dataset.k).status = b.dataset.s;
+      <div class="card-head"><div><h2>机会清单</h2><p class="muted small">按规则从最近 28 天的数据生成 · 标记已处理后进入观察，用之后的数据验证修复是否有效</p></div>
+        <div class="row" role="tablist" aria-label="视图">${views.map(([id, l, n]) =>
+          `<button class="pill" type="button" role="tab" data-v="${id}" aria-selected="${oppView === id}" aria-pressed="${oppView === id}">${l} <span class="mono">${n}</span></button>`).join("")}</div></div>
+      ${oppView === "open" ? `<div class="row filters" role="group" aria-label="按类型筛选">${[["all", "全部"], ...Object.entries(TYPES)].map(([id, l]) => {
+          const n = id === "all" ? open.length : open.filter((o) => o.type === id).length;
+          return n || id === "all" ? `<button class="pill sm" type="button" data-f="${id}" aria-pressed="${oppFilter === id}">${l} <span class="mono">${n}</span></button>` : "";
+        }).join("")}</div>` : ""}
+      ${oppView === "watching" && watches.length ? watchLegend : ""}
+      <div class="list">${shown.length ? shown.map((o) => oppView === "watching" ? watchCard(o, TYPES, marking === o.key) : oppRow(o, marking === o.key)).join("")
+        : `<div class="empty">${EMPTY[oppView]}</div>`}</div>`;
+    el.querySelectorAll("[data-v]").forEach((x) => x.addEventListener("click", () => { oppView = x.dataset.v; marking = null; draw(); }));
+    el.querySelectorAll("[data-f]").forEach((x) => x.addEventListener("click", () => { oppFilter = x.dataset.f; draw(); }));
+    el.querySelectorAll("[data-mark],[data-again]").forEach((x) => x.addEventListener("click", () => {
+      marking = x.dataset.mark || x.dataset.again;
+      draw();
+      el.querySelector(".mark-form input[name=note]")?.focus();
+    }));
+    el.querySelectorAll("[data-k]").forEach((x) => x.addEventListener("click", async () => {
+      await api(`${base}/opportunities`, { method: "PATCH", body: { key: x.dataset.k, status: x.dataset.s } });
+      items.find((o) => o.key === x.dataset.k).status = x.dataset.s;
       draw();
     }));
+    bindMarkForms(el, base, async (w) => {
+      marking = null;
+      if (w) {
+        watches = await api(`${base}/watches`);
+        const it = items.find((o) => o.key === w.key);
+        if (it) it.status = "watching";
+        oppView = "watching";
+      }
+      draw();
+    });
   };
   draw();
+}
+
+const EMPTY = {
+  open: "没有待处理的机会。数据量太小时规则不会触发，这是正常的。",
+  watching: "还没有观察中的问题。在「待处理」里把已经修复的机会标记为已处理，就会在这里持续跟踪效果。",
+  ignored: "没有忽略的机会。",
+};
+
+function oppRow(o, editing) {
+  const actions = o.status === "open"
+    ? `<button class="btn" type="button" data-mark="${esc(o.key)}">标记已处理</button>
+       <button class="btn" type="button" data-k="${esc(o.key)}" data-s="ignored">忽略</button>`
+    : `<button class="btn" type="button" data-k="${esc(o.key)}" data-s="open">已忽略 · 撤销</button>`;
+  return `<div class="item ${o.status === "ignored" ? "dim" : ""}">
+    <div style="flex:0 0 52px"><span class="tag ${o.type}">${TYPES[o.type]}</span></div>
+    <div class="t"><b>${esc(o.target)}</b><span class="ev">${esc(o.evidence)}</span></div>
+    <div class="a">${esc(o.action)}</div>
+    <div class="row"><span class="small ${IMPACT_CLS[o.impact]}"><b>影响 ${o.impact}</b></span>${editing ? "" : actions}</div>
+    ${editing ? `<div class="full">${markForm(o.key)}</div>` : ""}
+  </div>`;
 }
 
 // ---------------------------------------------------------------- 漏斗
@@ -317,6 +355,8 @@ function apiCard(domain) {
     ["GET", "/api/v1/sites", "所有站点与同步状态"],
     ["GET", `/api/v1/sites/${d}/summary?range=7d`, "核心指标与环比"],
     ["GET", `/api/v1/sites/${d}/opportunities`, "机会清单"],
+    ["GET", `/api/v1/sites/${d}/watches`, "观察中的问题：修复前后对比与每日判定"],
+    ["POST", `/api/v1/sites/${d}/watches`, "标记已处理 / 再次处理（key + note）"],
     ["GET", `/api/v1/sites/${d}/queries?min_impressions=10`, "搜索词明细（含每个词的全部落地页）"],
     ["GET", `/api/v1/sites/${d}/pages`, "落地页漏斗"],
     ["GET", `/api/v1/sites/${d}/index-status`, "逐 URL 收录状态"],
