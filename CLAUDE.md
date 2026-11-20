@@ -42,6 +42,7 @@ site-monitor/
 
 ## 变更日志
 
+- 2026-11-20 静态资源按内容哈希加版本 + import map：修复 Cloudflare 给 JS/CSS 补 4 小时浏览器缓存导致上线后刷新看不到新界面。
 - 2026-11-20 「已处理」改为观察期：每条观察每天用修复前 28 天做基线自动对比，给出 等待数据 / 见效中 / 已验证 / 未见改善 / 复发，永不删除；收录机会 key 改为稳定的 index:sitemap 并快照 URL 范围。
 - 2026-11-20 概览局部刷新；设置页二级菜单 + 站点多维表格 + 拖拽排序（sites.position）；国家维度同步 + 市场缺口规则。
 - 2026-11-20 部署到 docker-test（/root/docker-container/site-monitor），nginx-proxy-manager 反代 gdata.flyooo.uk。

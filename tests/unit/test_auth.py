@@ -71,3 +71,18 @@ def test_garbage_bearer_is_rejected(anon):
 
 def test_token_needs_a_name(user):
     assert user.post("/api/v1/tokens", json={"name": "  "}).status_code == 422
+
+
+def test_static_assets_are_versioned_and_html_is_not_cached(user):
+    """CDN 会给无缓存头的 JS/CSS 补 4 小时缓存：资源必须走带版本的地址，HTML 不能缓存。"""
+    ver = user.app.state.asset_version
+    page = user.get("/")
+    assert page.headers["cache-control"] == "no-store"
+    html = page.text
+    assert f'src="/static/{ver}/app.js"' in html and f'href="/static/{ver}/style.css"' in html
+    assert f'"/static/": "/static/{ver}/"' in html and html.index("importmap") < html.index("app.js")
+    asset = user.get(f"/static/{ver}/views/dashboard.js")
+    assert asset.status_code == 200 and "immutable" in asset.headers["cache-control"]
+    assert user.get("/static/app.js").headers["cache-control"] == "no-cache"
+    login = user.get("/login", follow_redirects=False)
+    assert login.status_code in (200, 307)

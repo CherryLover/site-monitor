@@ -32,6 +32,8 @@
 - `data_routes.py`  summary / trend / opportunities / watches / queries / pages / index-status / health / events / changelog。
 
 ## web/
+静态资源按内容哈希版本化（`main.py`）：HTML 不缓存并把 `/static/` 引用改写为 `/static/<版本>/`（永久缓存），
+JS 之间的 `import "/static/…"` 由页面里的 import map 映射到同一版本。改前端文件后无需手动改版本号。
 - `index.html` 应用外壳，`login.html` 登录页（未登录只展示它，用户点按钮才跳 Pocket ID）；`style.css` 设计令牌与组件。
 - `ui.js`   请求、转义、格式化、图表；所有数据字符串必须经 `esc()`。
 - `app.js`  启动与路由：未完成引导时强制进入 /setup。

@@ -6,13 +6,14 @@
 # ============================================================================
 from __future__ import annotations
 
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -27,6 +28,39 @@ from app.upstream import UpstreamError
 
 WEB = Path(__file__).parent / "web"
 PAGES = ("/", "/setup", "/settings")
+IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+# ---------------------------------------------------------------- 静态资源版本化
+#  CDN（Cloudflare）会给没有缓存头的 JS/CSS 补上 4 小时浏览器缓存，上线后用户刷新也看不到新界面。
+#  做法：版本号 = web/ 下所有文件内容的哈希；HTML 每次都不缓存，并把引用改写成 /static/<版本>/…，
+#  带版本的地址永久缓存（内容变了地址就变）。JS 之间的 import "/static/x.js" 由 import map
+#  统一映射到带版本的地址，源码不用改。
+def asset_version() -> str:
+    h = hashlib.sha256()
+    for f in sorted(p for p in WEB.rglob("*") if p.is_file()):
+        h.update(f.relative_to(WEB).as_posix().encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:12]
+
+
+class CachedStatic(StaticFiles):
+    def __init__(self, cache_control: str, **kw):
+        super().__init__(**kw)
+        self.cache_control = cache_control
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = self.cache_control
+        return resp
+
+
+def html_page(name: str, ver: str) -> HTMLResponse:
+    text = (WEB / name).read_text(encoding="utf-8")
+    text = text.replace('="/static/', f'="/static/{ver}/')
+    imports = f'<script type="importmap">{{"imports": {{"/static/": "/static/{ver}/"}}}}</script>'
+    text = text.replace("</head>", f"  {imports}\n</head>", 1)
+    return HTMLResponse(text, headers={"Cache-Control": "no-store"})
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
@@ -67,7 +101,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     )
     for r in (oidc.router, setup_routes.router, site_routes.router, data_routes.router):
         app.include_router(r)
-    app.mount("/static", StaticFiles(directory=WEB), name="static")
+    ver = asset_version()
+    app.state.asset_version = ver
+    # 顺序要紧：带版本的挂载必须在 /static 之前，否则会被 /static 先匹配走
+    app.mount(f"/static/{ver}", CachedStatic(IMMUTABLE, directory=WEB), name="assets")
+    app.mount("/static", CachedStatic("no-cache", directory=WEB), name="static")
 
     # ------------------------------------------------------------ 错误翻译
     @app.exception_handler(NotConfigured)
@@ -88,12 +126,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         # 未登录只展示登录页，由用户主动点击按钮再跳转到 Pocket ID
         if request.session.get("user"):
             return RedirectResponse("/")
-        return FileResponse(WEB / "login.html", headers={"Cache-Control": "no-store"})
+        return html_page("login.html", ver)
 
     async def page(request: Request):
         if not request.session.get("user"):
             return RedirectResponse("/login")
-        return FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
+        return html_page("index.html", ver)
 
     for p in PAGES:
         app.add_api_route(p, page, include_in_schema=False)
