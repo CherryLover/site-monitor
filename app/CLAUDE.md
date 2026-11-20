@@ -27,7 +27,7 @@
 - `data_routes.py`  summary / trend / opportunities / queries / pages / index-status / health / events / changelog。
 
 ## web/
-- `index.html` / `signed-out.html` 外壳；`style.css` 设计令牌与组件。
+- `index.html` 应用外壳，`login.html` 登录页（未登录只展示它，用户点按钮才跳 Pocket ID）；`style.css` 设计令牌与组件。
 - `ui.js`   请求、转义、格式化、图表；所有数据字符串必须经 `esc()`。
 - `app.js`  启动与路由：未完成引导时强制进入 /setup。
 - `views/`  `setup.js`（引导 + 可复用的凭证表单）、`dashboard.js`（概览）、`settings.js`（凭证、站点、Token）。

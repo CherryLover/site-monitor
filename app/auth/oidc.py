@@ -45,9 +45,7 @@ async def callback(request: Request):
     try:
         token = await request.app.state.oauth.pocketid.authorize_access_token(request)
     except OAuthError as e:
-        return HTMLResponse(
-            f"<p>登录失败：{e.error}。<a href='/auth/login'>重新登录</a></p>", status_code=400
-        )
+        return HTMLResponse(f"<p>登录失败：{e.error}。<a href='/login'>返回登录页</a></p>", status_code=400)
     info = token.get("userinfo") or {}
     user = {
         "sub": info["sub"],
@@ -72,4 +70,4 @@ async def callback(request: Request):
 @router.post("/auth/logout")
 async def logout(request: Request):
     request.session.clear()
-    return RedirectResponse("/signed-out", status_code=303)
+    return RedirectResponse("/login?out=1", status_code=303)

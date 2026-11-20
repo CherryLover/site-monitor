@@ -4,10 +4,17 @@ from __future__ import annotations
 from tests.conftest import login
 
 
-def test_pages_redirect_to_pocket_id_when_signed_out(anon):
+def test_signed_out_pages_show_login_page_not_pocket_id(anon):
     for p in ("/", "/setup", "/settings"):
         r = anon.get(p, follow_redirects=False)
-        assert r.status_code == 307 and r.headers["location"] == "/auth/login"
+        assert r.status_code == 307 and r.headers["location"] == "/login"
+    r = anon.get("/login")
+    assert r.status_code == 200 and 'href="/auth/login"' in r.text  # 只在用户点击时才去 Pocket ID
+
+
+def test_login_page_redirects_home_when_signed_in(user):
+    r = user.get("/login", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == "/"
 
 
 def test_api_requires_auth(anon):
@@ -30,7 +37,7 @@ def test_full_login_and_logout(anon):
     me = anon.get("/api/v1/me").json()
     assert me["email"] == "owner@acme.test"
     r = anon.post("/auth/logout", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/signed-out"
+    assert r.status_code == 303 and r.headers["location"] == "/login?out=1"
     assert anon.get("/api/v1/me").status_code == 401
 
 

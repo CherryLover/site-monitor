@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · Site Monitor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wrap center-card">
+    <section class="card narrow">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+        Site Monitor
+      </div>
+      <h1>登录</h1>
+      <p id="signed-out" class="callout hidden" role="status">你已退出登录。</p>
+      <p class="muted">站点搜索表现与站内行为监控。使用 Pocket ID 账号登录。</p>
+      <a class="btn primary" href="/auth/login">用 Pocket ID 登录</a>
+    </section>
+  </main>
+  <script>
+    if (new URLSearchParams(location.search).has("out")) document.getElementById("signed-out").classList.remove("hidden");
+  </script>
+</body>
+</html>

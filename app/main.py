@@ -83,13 +83,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def healthz():
         return {"ok": True}
 
-    @app.get("/signed-out", include_in_schema=False)
-    async def signed_out():
-        return FileResponse(WEB / "signed-out.html")
+    @app.get("/login", include_in_schema=False)
+    async def login_page(request: Request):
+        # 未登录只展示登录页，由用户主动点击按钮再跳转到 Pocket ID
+        if request.session.get("user"):
+            return RedirectResponse("/")
+        return FileResponse(WEB / "login.html", headers={"Cache-Control": "no-store"})
 
     async def page(request: Request):
         if not request.session.get("user"):
-            return RedirectResponse("/auth/login")
+            return RedirectResponse("/login")
         return FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
 
     for p in PAGES:

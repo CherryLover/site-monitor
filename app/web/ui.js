@@ -21,7 +21,7 @@ export async function api(path, { method = "GET", body } = {}) {
     credentials: "same-origin",
   });
   if (res.status === 401) {
-    location.href = "/auth/login";
+    location.href = "/login";
     throw new ApiError(401, { detail: "登录已过期" });
   }
   const data = res.status === 204 ? null : await res.json().catch(() => null);

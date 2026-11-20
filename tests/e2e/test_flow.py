@@ -36,6 +36,9 @@ def check(page: Page, button: str = "校验并保存"):
 def test_first_login_to_api_token(page: Page, app_url: str, fake: str):
     page.set_default_timeout(15000)
     page.goto(app_url)
+    # ---- 未登录只看到登录页，点按钮才去 Pocket ID
+    expect(page).to_have_url(f"{app_url}/login")
+    page.get_by_role("link", name="用 Pocket ID 登录").click()
     # ---- 登录后第一次进入，被引导到配置流程
     expect(page).to_have_url(f"{app_url}/setup")
     expect(page.get_by_role("heading", name="初始化配置")).to_be_visible()
@@ -121,5 +124,6 @@ def test_first_login_to_api_token(page: Page, app_url: str, fake: str):
 
     # ---- 退出
     page.get_by_role("button", name="退出").click()
-    expect(page.get_by_role("heading", name="已退出")).to_be_visible()
+    expect(page.get_by_text("你已退出登录。")).to_be_visible()
+    expect(page.get_by_role("link", name="用 Pocket ID 登录")).to_be_visible()
     assert httpx.get(f"{app_url}/api/v1/sites").status_code == 401
